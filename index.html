@@ -2499,101 +2499,301 @@ function applyStaggerAnimation() {
         // ============================================
         // 10. RSVP SYSTEM
         // ============================================
-        function submitRSVP(event) {
-            event.preventDefault();
-            
-            const nama = document.getElementById('nama').value.trim();
-            const jumlah = document.getElementById('jumlah').value;
-            const status = document.getElementById('status').value;
-            const pesan = document.getElementById('pesan').value.trim();
-            
-            if (!nama || !pesan) {
-                showNotification('Harap isi nama dan ucapan!', 'error');
-                return;
-            }
-            
-            saveRSVP({ nama, jumlah, status, pesan, timestamp: new Date().toISOString() });
-            
-            addGuestToDisplay({ nama, jumlah, status, pesan });
-            
-            document.getElementById('rsvpForm').reset();
-            
-            showNotification(`Terima kasih ${nama}! Konfirmasi Anda telah dikirim.`, 'success');
-        }
+const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxBO07IdH5Vw_DZ_ZWY0nIRUuQZc42ktN7vALUlxDYtn1vSTIEY-F42IK9juenWOr-Twg/exec';
 
-        function saveRSVP(data) {
-            try {
-                let rsvps = JSON.parse(localStorage.getItem('weddingRSVPs')) || [];
-                rsvps.unshift(data);
-                
-                if (rsvps.length > 50) {
-                    rsvps = rsvps.slice(0, 50);
-                }
-                
-                localStorage.setItem('weddingRSVPs', JSON.stringify(rsvps));
-            } catch (e) {
-                console.error('Gagal menyimpan RSVP:', e);
-            }
-        }
+async function submitRSVP(event) {
+    event.preventDefault();
+    
+    const nama = document.getElementById('nama').value.trim();
+    const jumlah = document.getElementById('jumlah').value;
+    const status = document.getElementById('status').value;
+    const pesan = document.getElementById('pesan').value.trim();
+    
+    if (!nama || !pesan) {
+        showNotification('Harap isi nama dan ucapan!', 'error');
+        return;
+    }
+    
+    const rsvpData = {
+        Nama: nama,
+        Jumlah: jumlah,
+        Status: status,
+        Pesan: pesan
+    };
+    
+    // Tampilkan loading
+    const submitBtn = document.querySelector('#rsvpForm button[type="submit"]');
+    const originalText = submitBtn.innerHTML;
+    submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Mengirim...';
+    submitBtn.disabled = true;
+    
+    try {
+        console.log('Mengirim data:', rsvpData);
+        
+        // Kirim ke Google Apps Script
+        const response = await fetch(APPS_SCRIPT_URL, {
+            method: 'POST',
+            mode: 'no-cors', // Penting untuk Google Apps Script
+            headers: {
+                'Content-Type': 'text/plain;charset=utf-8',
+            },
+            body: JSON.stringify(rsvpData)
+        });
+        
+        // Karena mode: 'no-cors', kita tidak bisa membaca response
+        // Tapi data tetap terkirim
+        
+        // Tampilkan di lokal langsung
+        const timestamp = new Date().toLocaleTimeString('id-ID', {
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+        
+        addGuestToDisplay({
+            nama: nama,
+            jumlah: jumlah,
+            status: status,
+            pesan: pesan,
+            timestamp: timestamp
+        });
+        
+        // Simpan juga ke localStorage sebagai backup
+        saveRSVPLocal({
+            nama: nama,
+            jumlah: jumlah,
+            status: status,
+            pesan: pesan,
+            timestamp: timestamp
+        });
+        
+        showNotification(`Terima kasih ${nama}! Ucapan Anda telah dikirim.`, 'success');
+        document.getElementById('rsvpForm').reset();
+        
+        // Refresh dari server setelah 1 detik
+        setTimeout(loadRSVPs, 1000);
+        
+    } catch (error) {
+        console.error('Error:', error);
+        
+        // Fallback ke localStorage saja
+        const timestamp = new Date().toLocaleTimeString('id-ID', {
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+        
+        const localData = {
+            nama: nama,
+            jumlah: jumlah,
+            status: status,
+            pesan: pesan,
+            timestamp: timestamp
+        };
+        
+        saveRSVPLocal(localData);
+        addGuestToDisplay(localData);
+        showNotification(`Terima kasih ${nama}! Ucapan disimpan lokal.`, 'success');
+        document.getElementById('rsvpForm').reset();
+        
+    } finally {
+        // Restore button
+        submitBtn.innerHTML = originalText;
+        submitBtn.disabled = false;
+    }
+}
 
-        function loadRSVPs() {
-            try {
-                const rsvps = JSON.parse(localStorage.getItem('weddingRSVPs')) || [];
-                const guestList = document.getElementById('guestList');
-                
-                if (!guestList) return;
-                
-                const recentRSVPs = rsvps.slice(0, 10);
-                
-                if (recentRSVPs.length === 0) {
-                    displaySampleRSVPs();
-                    return;
-                }
-                
-                recentRSVPs.forEach(rsvp => {
-                    addGuestToDisplay(rsvp);
-                });
-            } catch (e) {
-                console.error('Gagal memuat RSVP:', e);
-            }
+async function loadRSVPs() {
+    const guestList = document.getElementById('guestList');
+    if (!guestList) return;
+    
+    // Tampilkan loading
+    guestList.innerHTML = '<div style="text-align: center; padding: 20px; color: #666;"><i class="fas fa-spinner fa-spin"></i> Memuat ucapan...</div>';
+    
+    try {
+        console.log('Memuat data dari server...');
+        
+        // Coba ambil dari Apps Script
+        const response = await fetch(APPS_SCRIPT_URL);
+        
+        if (!response.ok) {
+            throw new Error(`Server error: ${response.status}`);
         }
-
-        function addGuestToDisplay(rsvp) {
-            const guestList = document.getElementById('guestList');
-            if (!guestList) return;
+        
+        const data = await response.json();
+        console.log('Data dari server:', data);
+        
+        // Clear tampilan
+        guestList.innerHTML = '';
+        
+        if (!data || data.length === 0) {
+            // Jika kosong, coba dari localStorage
+            loadRSVPsLocal();
+            return;
+        }
+        
+        // Tampilkan maksimal 10 terbaru
+        const recentRSVPs = data.slice(0, 10);
+        
+        recentRSVPs.forEach(rsvp => {
+            // Handle berbagai format field
+            const nama = rsvp.Nama || rsvp.nama || 'Tamu';
+            const jumlah = (rsvp.Jumlah || rsvp.jumlah || '1').toString();
+            const status = rsvp.Status || rsvp.status || 'Hadir';
+            const pesan = rsvp.Pesan || rsvp.pesan || '';
+            const timestamp = rsvp.Timestamp ? 
+                new Date(rsvp.Timestamp).toLocaleTimeString('id-ID', {hour: '2-digit', minute: '2-digit'}) :
+                (rsvp.timestamp || 'Baru saja');
             
-            const logEntry = document.createElement('div');
-            logEntry.className = 'guest-log';
-            
-            const statusColor = rsvp.status === 'Hadir' ? '#4CAF50' : '#FF9800';
-            const statusIcon = rsvp.status === 'Hadir' ? 'fa-smile' : 'fa-heart';
-            const time = rsvp.timestamp ? new Date(rsvp.timestamp).toLocaleTimeString('id-ID', {
-                hour: '2-digit',
-                minute: '2-digit'
-            }) : new Date().toLocaleTimeString('id-ID', {
-                hour: '2-digit',
-                minute: '2-digit'
+            addGuestToDisplay({
+                nama: nama,
+                jumlah: jumlah,
+                status: status,
+                pesan: pesan,
+                timestamp: timestamp
             });
-            
-            logEntry.innerHTML = `
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <strong style="color: ${statusColor}; font-size: 1.1rem;">${rsvp.nama}</strong>
-                    <span style="font-size: 0.9rem; color: ${statusColor};">
-                        <i class="fas ${statusIcon}"></i> ${rsvp.jumlah} orang • ${rsvp.status}
-                    </span>
-                </div>
-                <p style="margin-top: 12px; font-style: italic; color: #555; line-height: 1.5;">"${rsvp.pesan}"</p>
-                <div style="text-align: right; font-size: 0.85rem; color: #888; margin-top: 8px;">
-                    <i class="far fa-clock"></i> ${time}
-                </div>
-            `;
-            
-            if (guestList.firstChild) {
-                guestList.insertBefore(logEntry, guestList.firstChild);
-            } else {
-                guestList.appendChild(logEntry);
-            }
+        });
+        
+    } catch (error) {
+        console.error('Gagal memuat dari server:', error);
+        // Fallback ke localStorage
+        loadRSVPsLocal();
+    }
+}
+
+// ============================================
+// LOCALSTORAGE FUNCTIONS (BACKUP)
+// ============================================
+function saveRSVPLocal(data) {
+    try {
+        let rsvps = JSON.parse(localStorage.getItem('weddingRSVPs')) || [];
+        rsvps.unshift(data);
+        
+        // Simpan maksimal 50 entry
+        if (rsvps.length > 50) {
+            rsvps = rsvps.slice(0, 50);
         }
+        
+        localStorage.setItem('weddingRSVPs', JSON.stringify(rsvps));
+        console.log('Disimpan ke localStorage:', data);
+    } catch (e) {
+        console.error('Gagal menyimpan ke localStorage:', e);
+    }
+}
+
+function loadRSVPsLocal() {
+    try {
+        const rsvps = JSON.parse(localStorage.getItem('weddingRSVPs')) || [];
+        const guestList = document.getElementById('guestList');
+        
+        if (!guestList) return;
+        
+        guestList.innerHTML = '';
+        
+        if (rsvps.length === 0) {
+            displaySampleRSVPs();
+            return;
+        }
+        
+        // Tampilkan 10 terbaru
+        const recentRSVPs = rsvps.slice(0, 10);
+        
+        recentRSVPs.forEach(rsvp => {
+            addGuestToDisplay(rsvp);
+        });
+        
+    } catch (e) {
+        console.error('Gagal memuat dari localStorage:', e);
+        displaySampleRSVPs();
+    }
+}
+
+function displaySampleRSVPs() {
+    const guestList = document.getElementById('guestList');
+    if (!guestList) return;
+    
+    const sampleMessages = [
+        {
+            nama: "Keluarga Besar",
+            jumlah: "4",
+            status: "Hadir",
+            pesan: "Selamat menempuh hidup baru! Semoga bahagia selalu.",
+            timestamp: "16:30"
+        },
+        {
+            nama: "Sahabat Kampus",
+            jumlah: "2",
+            status: "Hadir",
+            pesan: "Akhirnya official! Semoga langgeng sampai tua.",
+            timestamp: "15:45"
+        }
+    ];
+    
+    sampleMessages.forEach(msg => {
+        addGuestToDisplay(msg);
+    });
+}
+
+// ============================================
+// DISPLAY FUNCTION
+// ============================================
+function addGuestToDisplay(rsvp) {
+    const guestList = document.getElementById('guestList');
+    if (!guestList) return;
+    
+    const logEntry = document.createElement('div');
+    logEntry.className = 'guest-log';
+    
+    const statusColor = rsvp.status === 'Hadir' ? '#4CAF50' : '#FF9800';
+    const statusIcon = rsvp.status === 'Hadir' ? 'fa-smile' : 'fa-heart';
+    
+    logEntry.innerHTML = `
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+            <strong style="color: ${statusColor}; font-size: 1.1rem; flex: 1;">${rsvp.nama}</strong>
+            <span style="font-size: 0.9rem; color: ${statusColor}; white-space: nowrap;">
+                <i class="fas ${statusIcon}"></i> ${rsvp.jumlah} orang • ${rsvp.status}
+            </span>
+        </div>
+        <p style="margin-top: 12px; font-style: italic; color: #555; line-height: 1.5;">"${rsvp.pesan}"</p>
+        <div style="text-align: right; font-size: 0.85rem; color: #888; margin-top: 8px;">
+            <i class="far fa-clock"></i> ${rsvp.timestamp}
+        </div>
+    `;
+    
+    // Tambahkan di atas (terbaru di atas)
+    if (guestList.firstChild) {
+        guestList.insertBefore(logEntry, guestList.firstChild);
+    } else {
+        guestList.appendChild(logEntry);
+    }
+}
+
+
+// Hapus semua data lokal
+function clearLocalData() {
+    if (confirm('Hapus semua ucapan di browser ini?')) {
+        localStorage.removeItem('weddingRSVPs');
+        const guestList = document.getElementById('guestList');
+        if (guestList) {
+            guestList.innerHTML = '<div style="padding: 20px; text-align: center; color: #666;">Belum ada ucapan. Jadilah yang pertama!</div>';
+        }
+        showNotification('Data lokal telah dihapus', 'success');
+    }
+}
+
+// ============================================
+// INITIALIZATION
+// ============================================
+// Panggil saat halaman dimuat
+document.addEventListener('DOMContentLoaded', function() {
+    // Tunggu 1 detik lalu load RSVPs
+    setTimeout(() => {
+        loadRSVPs();
+        // Test koneksi
+        testConnection();
+    }, 1000);
+    
+    // Auto-refresh setiap 30 detik
+    setInterval(loadRSVPs, 30000);
+});
 
         // ============================================
         // 11. CALENDAR FUNCTION
@@ -2701,5 +2901,6 @@ function applyStaggerAnimation() {
 </body>
 
 </html>
+
 
 
